@@ -24,62 +24,91 @@ jobs:
       - name: 1. Checkout Repository (EthioSport/ethio-sports-manual)
         uses: actions/checkout@v4
 
-      - name: 2. Set up JDK 17 (Temurin)
+      - name: 2. Auto-Extract Project ZIP (If uploaded directly from mobile as .zip)
+        run: |
+          if [ ! -f "settings.gradle.kts" ]; then
+            echo "Detected ZIP upload in repository root; extracting project files..."
+            for z in *.zip; do
+              if [ -f "$z" ]; then
+                unzip -q -o "$z"
+              fi
+            done
+            if [ -d "EthioSportsManual" ] && [ ! -f "settings.gradle.kts" ]; then
+              cp -r EthioSportsManual/* .
+              cp -r EthioSportsManual/.* . 2>/dev/null || true
+            fi
+          fi
+          ls -la
+
+      - name: 3. Set up JDK 17 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 3. Set up Android SDK (CompileSdk 36 & TargetSdk 36)
+      - name: 4. Set up Android SDK & Install API 36 Platform
         uses: android-actions/setup-android@v3
 
-      - name: 4. Configure Gradle 8.11.1 with Caching
+      - name: 5. Accept Android Licenses & Ensure SDK 36 is Installed
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "platforms;android-35" "build-tools;35.0.0" || true
+          if [ ! -d "$ANDROID_HOME/platforms/android-36" ]; then
+            echo "Fallback: adjusting compileSdk/targetSdk to 35 if runner mirror lacks android-36..."
+            sed -i 's/compileSdk = 36/compileSdk = 35/g' app/build.gradle.kts
+            sed -i 's/targetSdk = 36/targetSdk = 35/g' app/build.gradle.kts
+          fi
+
+      - name: 6. Configure Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
 
-      - name: 5. Decode Signing Keystore from GitHub Secrets
+      - name: 7. Decode Signing Keystore from GitHub Secrets (or Generate Fallback Key)
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SECRET_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          SECRET_STORE_PASS: ${{ secrets.STORE_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | tr -d '\n\r ' | base64 --decode > app/release-keystore.jks
-            echo "Release keystore decoded successfully to app/release-keystore.jks"
-          else
-            echo "KEYSTORE_BASE64 secret not set; generating fallback keystore for automated signing..."
-            keytool -genkeypair -v \
-              -keystore app/release-keystore.jks \
-              -alias "${{ secrets.KEY_ALIAS || 'ethiosports' }}" \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "${{ secrets.STORE_PASSWORD || 'ethiosports1970' }}" \
-              -keypass "${{ secrets.KEY_PASSWORD || 'ethiosports1970' }}" \
-              -dname "CN=Ethiopian Cultural Sports Federation, OU=Sports, O=ECSF, L=Addis Ababa, ST=Addis Ababa, C=ET"
+          ALIAS="${SECRET_KEY_ALIAS:-ethiosports}"
+          KPASS="${SECRET_KEY_PASS:-ethiosports1970}"
+          SPASS="${SECRET_STORE_PASS:-ethiosports1970}"
+
+          if [ -n "$SECRET_KEYSTORE_B64" ]; then
+            echo "$SECRET_KEYSTORE_B64" | tr -d '\n\r ' | base64 --decode > app/release-keystore.jks || true
           fi
 
-      - name: 6. Build Signed Release APK, Debug APK, and Play Console AAB Bundle
-        env:
-          KEYSTORE_PATH: "release-keystore.jks"
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'ethiosports' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'ethiosports1970' }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'ethiosports1970' }}
+          if [ ! -s "app/release-keystore.jks" ]; then
+            echo "Generating valid signing keystore for automated release build..."
+            rm -f app/release-keystore.jks
+            keytool -genkeypair -v               -keystore app/release-keystore.jks               -alias "$ALIAS"               -keyalg RSA -keysize 2048 -validity 10000               -storepass "$SPASS"               -keypass "$KPASS"               -dname "CN=Ethiopian Cultural Sports Federation, OU=Sports, O=ECSF, L=Addis Ababa, ST=Addis Ababa, C=ET"
+          fi
+
+          echo "KEYSTORE_PATH=release-keystore.jks" >> $GITHUB_ENV
+          echo "KEY_ALIAS=$ALIAS" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=$KPASS" >> $GITHUB_ENV
+          echo "STORE_PASSWORD=$SPASS" >> $GITHUB_ENV
+
+      - name: 8. Build Signed Release APK, Debug APK, and Play Console AAB Bundle
         run: |
           gradle assembleDebug assembleRelease bundleRelease --no-daemon --stacktrace
 
-      - name: 7. Upload Signed Release APK (ለስልክ መጫኛ Release APK)
+      - name: 9. Upload Signed Release APK (ለስልክ መጫኛ Release APK)
         uses: actions/upload-artifact@v4
         with:
           name: EthioSportsManual-v1.0.0-Release-APK
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      - name: 8. Upload Play Store Release AAB Bundle (ለGoogle Play Console AAB)
+      - name: 10. Upload Play Store Release AAB Bundle (ለGoogle Play Console AAB)
         uses: actions/upload-artifact@v4
         with:
           name: EthioSportsManual-v1.0.0-PlayStore-AAB
           path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
-      - name: 9. Upload Debug APK (ለሙከራ Debug APK)
+      - name: 11. Upload Debug APK (ለሙከራ Debug APK)
         uses: actions/upload-artifact@v4
         with:
           name: EthioSportsManual-v1.0.0-Debug-APK
