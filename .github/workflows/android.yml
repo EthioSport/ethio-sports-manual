@@ -549,6 +549,10 @@ jobs:
           ac = ac.replace("@AndroidEntryPoint\n", "")
           ac = ac.replace("hiltViewModel()", "viewModel(factory = MainViewModel.provideFactory(this@MainActivity))")
           ac = ac.replace('type = "text/plain"', 'setType("text/plain")')
+          ac = ac.replace(
+              "                        .padding(20.dp),\n                    verticalAlignment = Alignment.CenterVertically",
+              "                        .padding(20.dp)"
+          )
           act_p.write_text(ac, encoding="utf-8")
 
           # 9. Fix ChapterDetailScreen.kt multiline string, TTS setLanguage(), and nullable TTS engine
