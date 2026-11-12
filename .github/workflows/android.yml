@@ -24,30 +24,58 @@ jobs:
       - name: 1. Checkout Repository (EthioSport/ethio-sports-manual)
         uses: actions/checkout@v4
 
-      - name: 2. Auto-Extract Project ZIP & Apply Compatibility Fixes
+      - name: 2. Auto-Extract Project ZIP (Supports Flat or Nested Folder ZIPs)
         run: |
-          if [ ! -f "settings.gradle.kts" ]; then
-            echo "Detected ZIP upload in repository root; extracting project files..."
-            for z in *.zip; do
-              if [ -f "$z" ]; then
-                unzip -q -o "$z" -x ".github/*"
-              fi
-            done
-            if [ -d "EthioSportsManual" ] && [ ! -f "settings.gradle.kts" ]; then
-              cp -r EthioSportsManual/* .
+          echo "=== Checking repository contents ==="
+          ls -la
+          mkdir -p /tmp/workflow_backup
+          cp -rf .github/workflows/* /tmp/workflow_backup/ 2>/dev/null || true
+
+          # Extract any .zip file in root or subdirectories
+          find . -maxdepth 3 -name "*.zip" | while read -r zfile; do
+            echo "Extracting $zfile ..."
+            unzip -q -o "$zfile" || true
+          done
+
+          # Restore workflow files
+          mkdir -p .github/workflows
+          cp -rf /tmp/workflow_backup/* .github/workflows/ 2>/dev/null || true
+
+          # Locate app/build.gradle.kts or app/build.gradle at any folder depth and move to root
+          FOUND_APP=$(find . -maxdepth 4 -path "*/app/build.gradle*" | head -n 1)
+          if [ -n "$FOUND_APP" ]; then
+            PROJ_ROOT=$(dirname "$(dirname "$FOUND_APP")")
+            echo "Found Android project root at: $PROJ_ROOT"
+            if [ "$PROJ_ROOT" != "." ] && [ "$PROJ_ROOT" != "./." ]; then
+              cp -rf "$PROJ_ROOT"/* . || true
+              cp -rf "$PROJ_ROOT"/.* . 2>/dev/null || true
             fi
           fi
-          # Ensure K2 smart-cast safety and Gradle SDK properties even on older uploaded ZIP
+
+          if [ ! -d "app" ]; then
+            echo "ERROR: No Android 'app/' directory found in repository! Please upload EthioSportsManual_NativeKotlin_FullProject.zip to the repository root."
+            ls -laR
+            exit 1
+          fi
+
+          # Apply K2 & Manifest compatibility safeguards
           if [ -f "app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt" ]; then
-            sed -i 's/engine\.stop()/engine?.stop()/g' app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt
-            sed -i 's/engine\.shutdown()/engine?.shutdown()/g' app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt
+            sed -i 's/engine\.stop()/engine?.stop()/g' app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt || true
+            sed -i 's/engine\.shutdown()/engine?.shutdown()/g' app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt || true
           fi
           if [ -f "app/src/main/AndroidManifest.xml" ]; then
-            perl -0777 -pi -e 's/<service[^>]*AppLocalesMetadataHolderService.*?<\/service>//gs' app/src/main/AndroidManifest.xml
+            perl -0777 -pi -e 's/<service[^>]*AppLocalesMetadataHolderService.*?<\/service>//gs' app/src/main/AndroidManifest.xml || true
           fi
+
+          touch gradle.properties
           echo "" >> gradle.properties
           echo "android.suppressUnsupportedCompileSdk=36,35" >> gradle.properties
           echo "android.builder.sdkDownload=true" >> gradle.properties
+          echo "android.enableR8.fullMode=false" >> gradle.properties
+
+          mkdir -p app
+          touch app/proguard-rules.pro
+          echo "" >> app/proguard-rules.pro
           echo "-dontwarn **" >> app/proguard-rules.pro
 
       - name: 3. Set up JDK 17 (Temurin)
@@ -56,7 +84,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 4. Configure Pre-Installed Android SDK Licenses (Zero sdkmanager Crash)
+      - name: 4. Configure Pre-Installed Android SDK & Licenses
         run: |
           export SDK_DIR="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           echo "ANDROID_HOME=$SDK_DIR" >> $GITHUB_ENV
@@ -64,11 +92,10 @@ jobs:
           mkdir -p "$SDK_DIR/licenses"
           printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$SDK_DIR/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK_DIR/licenses/android-sdk-preview-license"
-          # Use pre-installed android-35 if android-36 is not yet pre-cached on runner
           if [ ! -d "$SDK_DIR/platforms/android-36" ] && [ -d "$SDK_DIR/platforms/android-35" ]; then
-            sed -i 's/compileSdk = 36/compileSdk = 35/g' app/build.gradle.kts
-            sed -i 's/targetSdk = 36/targetSdk = 35/g' app/build.gradle.kts
-            sed -i 's/tools:targetApi="36"/tools:targetApi="35"/g' app/src/main/AndroidManifest.xml
+            sed -i 's/compileSdk = 36/compileSdk = 35/g' app/build.gradle.kts || true
+            sed -i 's/targetSdk = 36/targetSdk = 35/g' app/build.gradle.kts || true
+            sed -i 's/tools:targetApi="36"/tools:targetApi="35"/g' app/src/main/AndroidManifest.xml || true
           fi
 
       - name: 5. Configure Gradle 8.11.1
@@ -76,7 +103,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: 6. Decode Signing Keystore from GitHub Secrets (or Generate Fallback Key)
+      - name: 6. Prepare Release Signing Keystore
         env:
           SECRET_KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
           SECRET_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -92,7 +119,6 @@ jobs:
           fi
 
           if [ ! -s "app/release-keystore.jks" ]; then
-            echo "Generating valid signing keystore for automated release build..."
             rm -f app/release-keystore.jks
             keytool -genkeypair -v               -keystore app/release-keystore.jks               -alias "$ALIAS"               -keyalg RSA -keysize 2048 -validity 10000               -storepass "$SPASS"               -keypass "$KPASS"               -dname "CN=Ethiopian Cultural Sports Federation, OU=Sports, O=ECSF, L=Addis Ababa, ST=Addis Ababa, C=ET"
           fi
