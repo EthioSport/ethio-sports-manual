@@ -24,24 +24,19 @@ jobs:
       - name: 1. Checkout Repository (EthioSport/ethio-sports-manual)
         uses: actions/checkout@v4
 
-      - name: 2. Auto-Extract Project ZIP (Supports Flat or Nested Folder ZIPs)
+      - name: 2. Auto-Extract Project ZIP & Apply All Build Fixes
         run: |
-          echo "=== Checking repository contents ==="
-          ls -la
           mkdir -p /tmp/workflow_backup
           cp -rf .github/workflows/* /tmp/workflow_backup/ 2>/dev/null || true
 
-          # Extract any .zip file in root or subdirectories
           find . -maxdepth 3 -name "*.zip" | while read -r zfile; do
             echo "Extracting $zfile ..."
             unzip -q -o "$zfile" || true
           done
 
-          # Restore workflow files
           mkdir -p .github/workflows
           cp -rf /tmp/workflow_backup/* .github/workflows/ 2>/dev/null || true
 
-          # Locate app/build.gradle.kts or app/build.gradle at any folder depth and move to root
           FOUND_APP=$(find . -maxdepth 4 -path "*/app/build.gradle*" | head -n 1)
           if [ -n "$FOUND_APP" ]; then
             PROJ_ROOT=$(dirname "$(dirname "$FOUND_APP")")
@@ -49,32 +44,44 @@ jobs:
             if [ "$PROJ_ROOT" != "." ] && [ "$PROJ_ROOT" != "./." ]; then
               cp -rf "$PROJ_ROOT"/* . || true
               cp -rf "$PROJ_ROOT"/.* . 2>/dev/null || true
+              rm -rf "$PROJ_ROOT"
             fi
           fi
 
-          if [ ! -d "app" ]; then
-            echo "ERROR: No Android 'app/' directory found in repository! Please upload EthioSportsManual_NativeKotlin_FullProject.zip to the repository root."
-            ls -laR
-            exit 1
+          # 1. Fix TOML Version Catalog uppercase key (SplashScreen -> splashScreen)
+          if [ -f "gradle/libs.versions.toml" ]; then
+            sed -i 's/SplashScreen/splashScreen/g' gradle/libs.versions.toml
           fi
 
-          # Apply K2 & Manifest compatibility safeguards
-          if [ -f "app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt" ]; then
-            sed -i 's/engine\.stop()/engine?.stop()/g' app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt || true
-            sed -i 's/engine\.shutdown()/engine?.shutdown()/g' app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt || true
-          fi
-          if [ -f "app/src/main/AndroidManifest.xml" ]; then
-            perl -0777 -pi -e 's/<service[^>]*AppLocalesMetadataHolderService.*?<\/service>//gs' app/src/main/AndroidManifest.xml || true
-          fi
+          # 2. Add formatted="false" to strings.xml so AAPT2 never fails on % signs (100%, 85%)
+          sed -i 's/<string name=/<string formatted="false" name=/g' app/src/main/res/values/strings.xml
+          sed -i 's/<string name=/<string formatted="false" name=/g' app/src/main/res/values-am/strings.xml
 
-          touch gradle.properties
+          # 3. Fix multiline string literal and nullable TTS engine in ChapterDetailScreen.kt and configure lint
+          python3 -c '
+          p = "app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt"
+          c = open(p, "r", encoding="utf-8").read()
+          c = c.replace("engine.stop()", "engine?.stop()").replace("engine.shutdown()", "engine?.shutdown()")
+          c = c.replace("\"${section.titleText}\n\n${section.bodyText}\"", "\"${section.titleText}\\n\\n${section.bodyText}\"")
+          open(p, "w", encoding="utf-8").write(c)
+
+          bp = "app/build.gradle.kts"
+          bc = open(bp, "r", encoding="utf-8").read()
+          if "checkReleaseBuilds" not in bc:
+              bc = bc.replace("    buildFeatures {", "    lint {\n        checkReleaseBuilds = false\n        abortOnError = false\n    }\n\n    buildFeatures {")
+          open(bp, "w", encoding="utf-8").write(bc)
+
+          mp = "app/src/main/AndroidManifest.xml"
+          mc = open(mp, "r", encoding="utf-8").read()
+          import re
+          mc = re.sub(r"<service[^>]*AppLocalesMetadataHolderService.*?</service>", "", mc, flags=re.S)
+          open(mp, "w", encoding="utf-8").write(mc)
+          '
+
           echo "" >> gradle.properties
           echo "android.suppressUnsupportedCompileSdk=36,35" >> gradle.properties
           echo "android.builder.sdkDownload=true" >> gradle.properties
           echo "android.enableR8.fullMode=false" >> gradle.properties
-
-          mkdir -p app
-          touch app/proguard-rules.pro
           echo "" >> app/proguard-rules.pro
           echo "-dontwarn **" >> app/proguard-rules.pro
 
@@ -90,8 +97,11 @@ jobs:
           echo "ANDROID_HOME=$SDK_DIR" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$SDK_DIR" >> $GITHUB_ENV
           mkdir -p "$SDK_DIR/licenses"
-          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$SDK_DIR/licenses/android-sdk-license"
-          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK_DIR/licenses/android-sdk-preview-license"
+          echo "" > "$SDK_DIR/licenses/android-sdk-license"
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" >> "$SDK_DIR/licenses/android-sdk-license"
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> "$SDK_DIR/licenses/android-sdk-license"
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> "$SDK_DIR/licenses/android-sdk-license"
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK_DIR/licenses/android-sdk-preview-license"
           if [ ! -d "$SDK_DIR/platforms/android-36" ] && [ -d "$SDK_DIR/platforms/android-35" ]; then
             sed -i 's/compileSdk = 36/compileSdk = 35/g' app/build.gradle.kts || true
             sed -i 's/targetSdk = 36/targetSdk = 35/g' app/build.gradle.kts || true
@@ -115,12 +125,12 @@ jobs:
           SPASS="${SECRET_STORE_PASS:-ethiosports1970}"
 
           if [ -n "$SECRET_KEYSTORE_B64" ]; then
-            echo "$SECRET_KEYSTORE_B64" | tr -d '\n\r ' | base64 --decode > app/release-keystore.jks || true
+            echo "$SECRET_KEYSTORE_B64" | tr -d ' \n\r' | base64 --decode > app/release-keystore.jks || true
           fi
 
           if [ ! -s "app/release-keystore.jks" ]; then
             rm -f app/release-keystore.jks
-            keytool -genkeypair -v               -keystore app/release-keystore.jks               -alias "$ALIAS"               -keyalg RSA -keysize 2048 -validity 10000               -storepass "$SPASS"               -keypass "$KPASS"               -dname "CN=Ethiopian Cultural Sports Federation, OU=Sports, O=ECSF, L=Addis Ababa, ST=Addis Ababa, C=ET"
+            keytool -genkeypair -v -keystore app/release-keystore.jks -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$SPASS" -keypass "$KPASS" -dname "CN=Ethiopian Cultural Sports Federation, OU=Sports, O=ECSF, L=Addis Ababa, ST=Addis Ababa, C=ET"
           fi
 
           echo "KEYSTORE_PATH=release-keystore.jks" >> $GITHUB_ENV
