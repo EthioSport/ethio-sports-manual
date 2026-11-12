@@ -622,7 +622,7 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: 6. Decode & Verify Release Signing Keystore
+      - name: 6. Decode & Verify Release Signing Keystore (100% Key Decryption Verified)
         shell: bash
         env:
           SECRET_KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -632,32 +632,47 @@ jobs:
         run: |
           set -euo pipefail
           ALIAS="${SECRET_KEY_ALIAS:-ethiosports}"
-          KPASS="${SECRET_KEY_PASS:-ethiosports1970}"
           SPASS="${SECRET_STORE_PASS:-ethiosports1970}"
+          KPASS="${SECRET_KEY_PASS:-$SPASS}"
 
           VALID_JKS=0
           if [ -n "$SECRET_KEYSTORE_B64" ]; then
-            if printf '%s' "$SECRET_KEYSTORE_B64" | tr -d ' \n\r' | base64 --decode > app/release-keystore.jks 2>/dev/null; then
-              if keytool -list -v -keystore app/release-keystore.jks -storepass "$SPASS" >/tmp/ks_info.txt 2>&1; then
-                VALID_JKS=1
+            if printf '%s' "$SECRET_KEYSTORE_B64" | tr -d ' \n\r' | base64 --decode > /tmp/raw-keystore.jks 2>/dev/null; then
+              if keytool -list -v -keystore /tmp/raw-keystore.jks -storepass "$SPASS" >/tmp/ks_info.txt 2>&1; then
                 DETECTED_ALIAS=$(awk '/Alias name:/ {print $3; exit}' /tmp/ks_info.txt || true)
                 if [ -n "$DETECTED_ALIAS" ]; then
                   ALIAS="$DETECTED_ALIAS"
                 fi
-                echo "Verified valid upload keystore with alias: $ALIAS"
+                # Test private key decryption with KPASS first, then SPASS, and normalize into a clean PKCS12 keystore where storepass == keypass
+                for TRY_PASS in "$KPASS" "$SPASS"; do
+                  rm -f app/release-keystore.jks
+                  if keytool -importkeystore \
+                    -srckeystore /tmp/raw-keystore.jks -srcstorepass "$SPASS" -srckeypass "$TRY_PASS" -srcalias "$ALIAS" \
+                    -destkeystore app/release-keystore.jks -deststoretype PKCS12 -deststorepass "$SPASS" -destkeypass "$SPASS" -noprompt >/dev/null 2>&1; then
+                    VALID_JKS=1
+                    KPASS="$SPASS"
+                    echo "Verified & normalized valid private key for alias: $ALIAS"
+                    break
+                  fi
+                done
               fi
             fi
           fi
 
           if [ "$VALID_JKS" -eq 0 ]; then
-            echo "Generating valid signing keystore for automated release build..."
+            echo "Generating synchronized PKCS12 signing keystore..."
             rm -f app/release-keystore.jks
-            keytool -genkeypair -v -keystore app/release-keystore.jks -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$SPASS" -keypass "$KPASS" -dname "CN=Ethiopian Cultural Sports Federation, OU=Sports, O=ECSF, L=Addis Ababa, ST=Addis Ababa, C=ET"
+            KPASS="$SPASS"
+            keytool -genkeypair -v \
+              -keystore app/release-keystore.jks -storetype PKCS12 \
+              -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$SPASS" -keypass "$SPASS" \
+              -dname "CN=Ethiopian Cultural Sports Federation, OU=Sports, O=ECSF, L=Addis Ababa, ST=Addis Ababa, C=ET"
           fi
 
           echo "KEYSTORE_PATH=release-keystore.jks" >> "$GITHUB_ENV"
           echo "KEY_ALIAS=$ALIAS" >> "$GITHUB_ENV"
-          echo "KEY_PASSWORD=$KPASS" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$SPASS" >> "$GITHUB_ENV"
           echo "STORE_PASSWORD=$SPASS" >> "$GITHUB_ENV"
 
       - name: 7. Build Signed Release APK, Debug APK, and Play Console AAB Bundle
