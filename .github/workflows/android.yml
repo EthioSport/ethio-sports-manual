@@ -1,4 +1,4 @@
-name: Ethio-Sports Rulebook Android CI/CD (APK & AAB)
+name: Ethio-Sports Rulebook Android CI/CD (APK, AAB & Privacy Policy Pages)
 
 on:
   push:
@@ -7,24 +7,31 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 env:
   APP_NAME: "ኢትዮ-ስፖርት ደንብ"
   PACKAGE_NAME: "eth.culturalsports.manual"
   GITHUB_ORG: "EthioSport"
   GITHUB_REPO: "ethio-sports-manual"
-  VERSION_CODE: "1"
-  VERSION_NAME: "1.0.0"
+  VERSION_CODE: "2"
+  VERSION_NAME: "1.1.0"
 
 jobs:
   build-apk-and-aab:
-    name: Build Native Kotlin APK & Play Store AAB (SDK 36)
+    name: Build Native Kotlin APK & Play Store AAB (v1.1.0)
     runs-on: ubuntu-latest
 
     steps:
       - name: 1. Checkout Repository (EthioSport/ethio-sports-manual)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: 2. Auto-Extract Project ZIP & Self-Heal All Gradle/Kotlin/XML Files
+      - name: 2. Auto-Extract Project ZIP & Publish Privacy Policy HTML for GitHub Pages
         shell: bash
         run: |
           set -euo pipefail
@@ -49,552 +56,44 @@ jobs:
             fi
           fi
 
-          # Remove KSP/Hilt/TOML catalog bottlenecks and upgrade to 100% pure Kotlin SQLite + ViewModelFactory
+          # Remove any legacy KSP/Hilt/TOML catalog files if present
           rm -rf app/src/main/java/eth/culturalsports/manual/di gradle/libs.versions.toml
 
+          # Ensure AndroidManifest.xml and strings.xml are 100% clean
           python3 - << 'PYEOF'
           from pathlib import Path
           import re
 
-          # 1. Root build.gradle.kts (Pure Android + Kotlin + Compose Compiler - Zero KSP/Hilt worker crashes)
-          Path("build.gradle.kts").write_text('''plugins {
-              id("com.android.application") version "8.7.2" apply false
-              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
-              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
-          }
-          ''', encoding="utf-8")
-
-          # 2. app/build.gradle.kts (Direct Maven coordinates, SDK 35, V1-V4 signing, lint safe)
-          Path("app/build.gradle.kts").write_text('''import java.util.Properties
-          import java.io.FileInputStream
-
-          plugins {
-              id("com.android.application")
-              id("org.jetbrains.kotlin.android")
-              id("org.jetbrains.kotlin.plugin.compose")
-          }
-
-          val localProps = Properties()
-          val localPropsFile = rootProject.file("local.properties")
-          if (localPropsFile.exists()) {
-              FileInputStream(localPropsFile).use { localProps.load(it) }
-          }
-
-          fun getSecret(envKey: String, propKey: String, fallback: String = ""): String {
-              return System.getenv(envKey)?.takeIf { it.isNotBlank() }
-                  ?: localProps.getProperty(propKey)?.takeIf { it.isNotBlank() }
-                  ?: fallback
-          }
-
-          android {
-              namespace = "eth.culturalsports.manual"
-              compileSdk = 35
-
-              defaultConfig {
-                  applicationId = "eth.culturalsports.manual"
-                  minSdk = 23
-                  targetSdk = 35
-                  versionCode = 1
-                  versionName = "1.0.0"
-
-                  testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-                  vectorDrawables {
-                      useSupportLibrary = true
-                  }
-                  resourceConfigurations += listOf("en", "am")
-              }
-
-              bundle {
-                  language {
-                      enableSplit = false
-                  }
-              }
-
-              signingConfigs {
-                  create("release") {
-                      val keystoreFile = file("release-keystore.jks")
-                      if (keystoreFile.exists()) {
-                          storeFile = keystoreFile
-                          storePassword = getSecret("STORE_PASSWORD", "store.password", "ethiosports1970")
-                          keyAlias = getSecret("KEY_ALIAS", "key.alias", "ethiosports")
-                          keyPassword = getSecret("KEY_PASSWORD", "key.password", "ethiosports1970")
-                          enableV1Signing = true
-                          enableV2Signing = true
-                          enableV3Signing = true
-                          enableV4Signing = true
-                      }
-                  }
-              }
-
-              buildTypes {
-                  release {
-                      isMinifyEnabled = false
-                      isShrinkResources = false
-                      val releaseKeystore = file("release-keystore.jks")
-                      signingConfig = if (releaseKeystore.exists()) {
-                          signingConfigs.getByName("release")
-                      } else {
-                          signingConfigs.getByName("debug")
-                      }
-                      proguardFiles(
-                          getDefaultProguardFile("proguard-android-optimize.txt"),
-                          "proguard-rules.pro"
-                      )
-                  }
-                  debug {
-                      isMinifyEnabled = false
-                      applicationIdSuffix = ".debug"
-                      versionNameSuffix = "-debug"
-                  }
-              }
-
-              lint {
-                  abortOnError = false
-                  checkReleaseBuilds = false
-              }
-
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-
-              buildFeatures {
-                  compose = true
-                  buildConfig = true
-              }
-
-              packaging {
-                  resources {
-                      excludes += "/META-INF/{AL2.0,LGPL2.1}"
-                  }
-              }
-          }
-
-          dependencies {
-              implementation("androidx.core:core-ktx:1.15.0")
-              implementation("androidx.appcompat:appcompat:1.7.0")
-              implementation("androidx.core:core-splashscreen:1.0.1")
-              implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-              implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
-              implementation("androidx.activity:activity-compose:1.9.3")
-
-              implementation(platform("androidx.compose:compose-bom:2024.12.01"))
-              implementation("androidx.compose.ui:ui")
-              implementation("androidx.compose.ui:ui-graphics")
-              implementation("androidx.compose.ui:ui-tooling-preview")
-              implementation("androidx.compose.material3:material3")
-              implementation("androidx.compose.material:material-icons-extended")
-              implementation("androidx.navigation:navigation-compose:2.8.5")
-
-              implementation("androidx.datastore:datastore-preferences:1.1.1")
-              implementation("androidx.biometric:biometric:1.1.0")
-              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-
-              debugImplementation("androidx.compose.ui:ui-tooling")
-          }
-          ''', encoding="utf-8")
-
-          # 3. EthioSportsApp.kt
-          Path("app/src/main/java/eth/culturalsports/manual/EthioSportsApp.kt").write_text('''package eth.culturalsports.manual
-
-          import android.app.Application
-
-          class EthioSportsApp : Application()
-          ''', encoding="utf-8")
-
-          # 4. ManualDatabase.kt (Pure Kotlin SQLiteOpenHelper + Flow)
-          Path("app/src/main/java/eth/culturalsports/manual/data/local/ManualDatabase.kt").write_text('''package eth.culturalsports.manual.data.local
-
-          import android.content.ContentValues
-          import android.content.Context
-          import android.database.sqlite.SQLiteDatabase
-          import android.database.sqlite.SQLiteOpenHelper
-          import kotlinx.coroutines.Dispatchers
-          import kotlinx.coroutines.flow.Flow
-          import kotlinx.coroutines.flow.MutableStateFlow
-          import kotlinx.coroutines.flow.asStateFlow
-          import kotlinx.coroutines.withContext
-
-          data class BookmarkEntity(
-              val chapterId: Int,
-              val sectionIndex: Int = 0,
-              val timestamp: Long = System.currentTimeMillis()
-          )
-
-          data class QuizScoreEntity(
-              val id: Int = 0,
-              val category: String,
-              val score: Int,
-              val totalQuestions: Int,
-              val timestamp: Long = System.currentTimeMillis()
-          )
-
-          data class OfficialNoteEntity(
-              val id: Int = 0,
-              val title: String,
-              val encryptedContent: String,
-              val timestamp: Long = System.currentTimeMillis()
-          )
-
-          interface BookmarkDao {
-              fun observeBookmarks(): Flow<List<BookmarkEntity>>
-              suspend fun insertBookmark(bookmark: BookmarkEntity)
-              suspend fun removeBookmark(chapterId: Int)
-          }
-
-          interface QuizScoreDao {
-              fun observeRecentScores(): Flow<List<QuizScoreEntity>>
-              suspend fun insertScore(score: QuizScoreEntity)
-          }
-
-          interface OfficialNoteDao {
-              fun observeNotes(): Flow<List<OfficialNoteEntity>>
-              suspend fun insertNote(note: OfficialNoteEntity)
-              suspend fun deleteNote(note: OfficialNoteEntity)
-          }
-
-          class ManualDatabase private constructor(context: Context) :
-              SQLiteOpenHelper(context.applicationContext, "ethio_cultural_sports_manual.db", null, 1),
-              BookmarkDao,
-              QuizScoreDao,
-              OfficialNoteDao {
-
-              private val bookmarksFlow = MutableStateFlow<List<BookmarkEntity>>(emptyList())
-              private val scoresFlow = MutableStateFlow<List<QuizScoreEntity>>(emptyList())
-              private val notesFlow = MutableStateFlow<List<OfficialNoteEntity>>(emptyList())
-
-              init {
-                  refreshAll()
-              }
-
-              override fun onCreate(db: SQLiteDatabase) {
-                  db.execSQL("CREATE TABLE IF NOT EXISTS bookmarks (chapterId INTEGER PRIMARY KEY, sectionIndex INTEGER NOT NULL, timestamp INTEGER NOT NULL)")
-                  db.execSQL("CREATE TABLE IF NOT EXISTS quiz_scores (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, score INTEGER NOT NULL, totalQuestions INTEGER NOT NULL, timestamp INTEGER NOT NULL)")
-                  db.execSQL("CREATE TABLE IF NOT EXISTS official_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, encryptedContent TEXT NOT NULL, timestamp INTEGER NOT NULL)")
-              }
-
-              override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                  onCreate(db)
-              }
-
-              private fun refreshAll() {
-                  bookmarksFlow.value = queryBookmarksInternal()
-                  scoresFlow.value = queryScoresInternal()
-                  notesFlow.value = queryNotesInternal()
-              }
-
-              private fun queryBookmarksInternal(): List<BookmarkEntity> {
-                  val list = mutableListOf<BookmarkEntity>()
-                  readableDatabase.rawQuery("SELECT chapterId, sectionIndex, timestamp FROM bookmarks ORDER BY timestamp DESC", null).use { c ->
-                      while (c.moveToNext()) {
-                          list.add(BookmarkEntity(c.getInt(0), c.getInt(1), c.getLong(2)))
-                      }
-                  }
-                  return list
-              }
-
-              private fun queryScoresInternal(): List<QuizScoreEntity> {
-                  val list = mutableListOf<QuizScoreEntity>()
-                  readableDatabase.rawQuery("SELECT id, category, score, totalQuestions, timestamp FROM quiz_scores ORDER BY timestamp DESC LIMIT 20", null).use { c ->
-                      while (c.moveToNext()) {
-                          list.add(QuizScoreEntity(c.getInt(0), c.getString(1), c.getInt(2), c.getInt(3), c.getLong(4)))
-                      }
-                  }
-                  return list
-              }
-
-              private fun queryNotesInternal(): List<OfficialNoteEntity> {
-                  val list = mutableListOf<OfficialNoteEntity>()
-                  readableDatabase.rawQuery("SELECT id, title, encryptedContent, timestamp FROM official_notes ORDER BY timestamp DESC", null).use { c ->
-                      while (c.moveToNext()) {
-                          list.add(OfficialNoteEntity(c.getInt(0), c.getString(1), c.getString(2), c.getLong(3)))
-                      }
-                  }
-                  return list
-              }
-
-              override fun observeBookmarks(): Flow<List<BookmarkEntity>> = bookmarksFlow.asStateFlow()
-
-              override suspend fun insertBookmark(bookmark: BookmarkEntity) {
-                  withContext(Dispatchers.IO) {
-                      val cv = ContentValues().apply {
-                          put("chapterId", bookmark.chapterId)
-                          put("sectionIndex", bookmark.sectionIndex)
-                          put("timestamp", bookmark.timestamp)
-                      }
-                      writableDatabase.insertWithOnConflict("bookmarks", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
-                      bookmarksFlow.value = queryBookmarksInternal()
-                  }
-              }
-
-              override suspend fun removeBookmark(chapterId: Int) {
-                  withContext(Dispatchers.IO) {
-                      writableDatabase.delete("bookmarks", "chapterId = ?", arrayOf(chapterId.toString()))
-                      bookmarksFlow.value = queryBookmarksInternal()
-                  }
-              }
-
-              override fun observeRecentScores(): Flow<List<QuizScoreEntity>> = scoresFlow.asStateFlow()
-
-              override suspend fun insertScore(score: QuizScoreEntity) {
-                  withContext(Dispatchers.IO) {
-                      val cv = ContentValues().apply {
-                          put("category", score.category)
-                          put("score", score.score)
-                          put("totalQuestions", score.totalQuestions)
-                          put("timestamp", score.timestamp)
-                      }
-                      writableDatabase.insertWithOnConflict("quiz_scores", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
-                      scoresFlow.value = queryScoresInternal()
-                  }
-              }
-
-              override fun observeNotes(): Flow<List<OfficialNoteEntity>> = notesFlow.asStateFlow()
-
-              override suspend fun insertNote(note: OfficialNoteEntity) {
-                  withContext(Dispatchers.IO) {
-                      val cv = ContentValues().apply {
-                          put("title", note.title)
-                          put("encryptedContent", note.encryptedContent)
-                          put("timestamp", note.timestamp)
-                      }
-                      writableDatabase.insertWithOnConflict("official_notes", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
-                      notesFlow.value = queryNotesInternal()
-                  }
-              }
-
-              override suspend fun deleteNote(note: OfficialNoteEntity) {
-                  withContext(Dispatchers.IO) {
-                      writableDatabase.delete("official_notes", "id = ?", arrayOf(note.id.toString()))
-                      notesFlow.value = queryNotesInternal()
-                  }
-              }
-
-              fun bookmarkDao(): BookmarkDao = this
-              fun quizScoreDao(): QuizScoreDao = this
-              fun officialNoteDao(): OfficialNoteDao = this
-
-              companion object {
-                  @Volatile
-                  private var INSTANCE: ManualDatabase? = null
-
-                  fun getInstance(context: Context): ManualDatabase {
-                      return INSTANCE ?: synchronized(this) {
-                          INSTANCE ?: ManualDatabase(context.applicationContext).also { INSTANCE = it }
-                      }
-                  }
-              }
-          }
-          ''', encoding="utf-8")
-
-          # 5. UserPreferencesRepository.kt
-          Path("app/src/main/java/eth/culturalsports/manual/data/preferences/UserPreferencesRepository.kt").write_text('''package eth.culturalsports.manual.data.preferences
-
-          import android.content.Context
-          import android.content.SharedPreferences
-          import android.util.Base64
-          import androidx.datastore.core.DataStore
-          import androidx.datastore.preferences.core.Preferences
-          import androidx.datastore.preferences.core.booleanPreferencesKey
-          import androidx.datastore.preferences.core.edit
-          import androidx.datastore.preferences.core.floatPreferencesKey
-          import androidx.datastore.preferences.core.intPreferencesKey
-          import androidx.datastore.preferences.core.stringPreferencesKey
-          import androidx.datastore.preferences.preferencesDataStore
-          import kotlinx.coroutines.flow.Flow
-          import kotlinx.coroutines.flow.map
-
-          private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "ethio_sports_user_prefs")
-
-          data class UserPreferencesState(
-              val languageCode: String = "am",
-              val isDarkMode: Boolean = false,
-              val useDynamicColors: Boolean = false,
-              val fontScale: Float = 1.0f,
-              val onboardingCompleted: Boolean = false,
-              val privacyAccepted: Boolean = false,
-              val lastReadChapterId: Int = 1,
-              val lastReadSectionIndex: Int = 0
-          )
-
-          class UserPreferencesRepository(
-              private val context: Context
-          ) {
-              private object Keys {
-                  val LANGUAGE = stringPreferencesKey("language_code")
-                  val DARK_MODE = booleanPreferencesKey("dark_mode")
-                  val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
-                  val FONT_SCALE = floatPreferencesKey("font_scale")
-                  val ONBOARDING_DONE = booleanPreferencesKey("onboarding_done")
-                  val PRIVACY_ACCEPTED = booleanPreferencesKey("privacy_accepted")
-                  val LAST_CHAPTER_ID = intPreferencesKey("last_chapter_id")
-                  val LAST_SECTION_IDX = intPreferencesKey("last_section_idx")
-              }
-
-              val preferencesFlow: Flow<UserPreferencesState> = context.dataStore.data.map { prefs ->
-                  UserPreferencesState(
-                      languageCode = prefs[Keys.LANGUAGE] ?: "am",
-                      isDarkMode = prefs[Keys.DARK_MODE] ?: false,
-                      useDynamicColors = prefs[Keys.DYNAMIC_COLOR] ?: false,
-                      fontScale = prefs[Keys.FONT_SCALE] ?: 1.0f,
-                      onboardingCompleted = prefs[Keys.ONBOARDING_DONE] ?: false,
-                      privacyAccepted = prefs[Keys.PRIVACY_ACCEPTED] ?: false,
-                      lastReadChapterId = prefs[Keys.LAST_CHAPTER_ID] ?: 1,
-                      lastReadSectionIndex = prefs[Keys.LAST_SECTION_IDX] ?: 0
-                  )
-              }
-
-              private val securePrefs: SharedPreferences by lazy {
-                  context.getSharedPreferences("official_encrypted_prefs", Context.MODE_PRIVATE)
-              }
-
-              suspend fun setLanguage(langCode: String) {
-                  context.dataStore.edit { it[Keys.LANGUAGE] = langCode }
-              }
-
-              suspend fun setDarkMode(enabled: Boolean) {
-                  context.dataStore.edit { it[Keys.DARK_MODE] = enabled }
-              }
-
-              suspend fun setDynamicColors(enabled: Boolean) {
-                  context.dataStore.edit { it[Keys.DYNAMIC_COLOR] = enabled }
-              }
-
-              suspend fun setFontScale(scale: Float) {
-                  context.dataStore.edit { it[Keys.FONT_SCALE] = scale.coerceIn(0.85f, 1.45f) }
-              }
-
-              suspend fun setOnboardingCompleted(completed: Boolean) {
-                  context.dataStore.edit { it[Keys.ONBOARDING_DONE] = completed }
-              }
-
-              suspend fun setPrivacyAccepted(accepted: Boolean) {
-                  context.dataStore.edit { it[Keys.PRIVACY_ACCEPTED] = accepted }
-              }
-
-              suspend fun saveReadingPosition(chapterId: Int, sectionIndex: Int) {
-                  context.dataStore.edit {
-                      it[Keys.LAST_CHAPTER_ID] = chapterId
-                      it[Keys.LAST_SECTION_IDX] = sectionIndex
-                  }
-              }
-
-              fun saveEncryptedOfficialPin(pin: String) {
-                  val encoded = Base64.encodeToString(pin.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-                  securePrefs.edit().putString("official_vault_pin", encoded).apply()
-              }
-
-              fun getEncryptedOfficialPin(): String {
-                  val encoded = securePrefs.getString("official_vault_pin", null) ?: return "1970"
-                  return try {
-                      String(Base64.decode(encoded, Base64.NO_WRAP), Charsets.UTF_8)
-                  } catch (e: Exception) {
-                      "1970"
-                  }
-              }
-          }
-          ''', encoding="utf-8")
-
-          # 6. Strip Hilt from ManualRepositoryImpl.kt
-          repo_p = Path("app/src/main/java/eth/culturalsports/manual/data/repository/ManualRepositoryImpl.kt")
-          rc = repo_p.read_text(encoding="utf-8")
-          rc = re.sub(r"import\s+(dagger\.hilt|javax\.inject)[^\n]*\n", "", rc)
-          rc = rc.replace("@Singleton\n", "")
-          rc = re.sub(r"class\s+ManualRepositoryImpl\s*(?:@Inject\s+constructor)?\s*\(\s*(?:@ApplicationContext\s+)?private\s+val\s+appContext:\s*Context\s*\)", "class ManualRepositoryImpl(private val appContext: Context)", rc)
-          repo_p.write_text(rc, encoding="utf-8")
-
-          # 7. Strip Hilt from MainViewModel.kt and add provideFactory
-          vm_p = Path("app/src/main/java/eth/culturalsports/manual/ui/viewmodel/MainViewModel.kt")
-          vc = vm_p.read_text(encoding="utf-8")
-          vc = re.sub(r"import\s+(dagger\.hilt|javax\.inject)[^\n]*\n", "", vc)
-          vc = vc.replace("@HiltViewModel\n", "")
-          vc = re.sub(r"class\s+MainViewModel\s*(?:@Inject\s+constructor)?\s*\(", "class MainViewModel(", vc)
-          if "provideFactory" not in vc:
-              vc = "import android.content.Context\nimport androidx.lifecycle.ViewModelProvider\nimport eth.culturalsports.manual.data.local.ManualDatabase\nimport eth.culturalsports.manual.data.repository.ManualRepositoryImpl\n" + vc.split("\n", 1)[1]
-              vc = "package eth.culturalsports.manual.ui.viewmodel\n\n" + vc
-              factory_code = '''
-              companion object {
-                  fun provideFactory(context: Context): ViewModelProvider.Factory {
-                      val appCtx = context.applicationContext
-                      return object : ViewModelProvider.Factory {
-                          @Suppress("UNCHECKED_CAST")
-                          override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                              val db = ManualDatabase.getInstance(appCtx)
-                              return MainViewModel(
-                                  manualRepository = ManualRepositoryImpl(appCtx),
-                                  prefsRepository = UserPreferencesRepository(appCtx),
-                                  bookmarkDao = db.bookmarkDao(),
-                                  quizScoreDao = db.quizScoreDao(),
-                                  officialNoteDao = db.officialNoteDao()
-                              ) as T
-                          }
-                      }
-                  }
-              }
-          }
-          '''
-              vc = vc.rstrip()[:-1] + factory_code
-          vm_p.write_text(vc, encoding="utf-8")
-
-          # 8. Strip Hilt and fix Intent.setType in MainActivity.kt
-          act_p = Path("app/src/main/java/eth/culturalsports/manual/MainActivity.kt")
-          ac = act_p.read_text(encoding="utf-8")
-          ac = ac.replace("import androidx.hilt.navigation.compose.hiltViewModel", "import androidx.lifecycle.viewmodel.compose.viewModel")
-          ac = re.sub(r"import\s+dagger\.hilt[^\n]*\n", "", ac)
-          ac = ac.replace("@AndroidEntryPoint\n", "")
-          ac = ac.replace("hiltViewModel()", "viewModel(factory = MainViewModel.provideFactory(this@MainActivity))")
-          ac = ac.replace('type = "text/plain"', 'setType("text/plain")')
-          ac = ac.replace(
-              "                        .padding(20.dp),\n                    verticalAlignment = Alignment.CenterVertically",
-              "                        .padding(20.dp)"
-          )
-          act_p.write_text(ac, encoding="utf-8")
-
-          # 9. Fix ChapterDetailScreen.kt multiline string, TTS setLanguage(), and nullable TTS engine
-          cd_p = Path("app/src/main/java/eth/culturalsports/manual/ui/screens/ChapterDetailScreen.kt")
-          cc = cd_p.read_text(encoding="utf-8")
-          cc = cc.replace("engine.stop()", "engine?.stop()").replace("engine.shutdown()", "engine?.shutdown()")
-          cc = cc.replace('engine?.language = if (isAmharic) Locale("am") else Locale.US', 'engine?.setLanguage(if (isAmharic) Locale("am") else Locale.US)')
-          cc = re.sub(r'"\$\{section\.titleText\}\s+\$\{section\.bodyText\}"', r'"${section.titleText}\\n\\n${section.bodyText}"', cc)
-          cd_p.write_text(cc, encoding="utf-8")
-
-          # 9b. Fix Intent.setData in AboutAndContactScreen.kt and Paint setters in SportFieldCanvas.kt
-          ab_p = Path("app/src/main/java/eth/culturalsports/manual/ui/screens/AboutAndContactScreen.kt")
-          abc = ab_p.read_text(encoding="utf-8")
-          abc = abc.replace('data = Uri.parse("mailto:$emailAddress")', 'setData(Uri.parse("mailto:$emailAddress"))')
-          ab_p.write_text(abc, encoding="utf-8")
-
-          sf_p = Path("app/src/main/java/eth/culturalsports/manual/ui/components/SportFieldCanvas.kt")
-          sfc = sf_p.read_text(encoding="utf-8")
-          sfc = sfc.replace("this.color = color.toArgb()", "setColor(color.toArgb())")
-          sfc = sfc.replace("this.textSize = textSize", "setTextSize(textSize)")
-          sfc = sfc.replace("this.isFakeBoldText = true", "setFakeBoldText(true)")
-          sfc = sfc.replace("this.textAlign = if (alignCenter) Paint.Align.CENTER else Paint.Align.LEFT", "setTextAlign(if (alignCenter) Paint.Align.CENTER else Paint.Align.LEFT)")
-          sf_p.write_text(sfc, encoding="utf-8")
-
-          # 10. Clean AndroidManifest.xml and strings.xml formatted="false"
           mp = Path("app/src/main/AndroidManifest.xml")
-          mc = mp.read_text(encoding="utf-8")
-          mc = re.sub(r"<service[^>]*AppLocalesMetadataHolderService.*?</service>", "", mc, flags=re.S)
-          mc = mc.replace('tools:targetApi="36"', 'tools:targetApi="35"')
-          mp.write_text(mc, encoding="utf-8")
+          if mp.exists():
+              mc = mp.read_text(encoding="utf-8")
+              mc = re.sub(r"<service[^>]*AppLocalesMetadataHolderService.*?</service>", "", mc, flags=re.S)
+              mc = mc.replace('tools:targetApi="36"', 'tools:targetApi="35"')
+              mp.write_text(mc, encoding="utf-8")
 
           for sp in [Path("app/src/main/res/values/strings.xml"), Path("app/src/main/res/values-am/strings.xml")]:
-              st = sp.read_text(encoding="utf-8")
-              if 'formatted="false"' not in st:
-                  st = st.replace("<string name=", '<string formatted="false" name=')
-                  sp.write_text(st, encoding="utf-8")
+              if sp.exists():
+                  st = sp.read_text(encoding="utf-8")
+                  if 'formatted="false"' not in st:
+                      st = st.replace("<string name=", '<string formatted="false" name=')
+                      sp.write_text(st, encoding="utf-8")
           PYEOF
 
           echo "" >> gradle.properties
           echo "android.suppressUnsupportedCompileSdk=36,35" >> gradle.properties
           echo "android.builder.sdkDownload=true" >> gradle.properties
           echo "android.enableR8.fullMode=false" >> gradle.properties
+
+          # Auto-commit extracted privacy-policy.html & docs/privacy-policy.html to branch so GitHub Pages serves it live
+          if [ -f "privacy-policy.html" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -f privacy-policy.html index.html docs/privacy-policy.html docs/index.html PRIVACY_POLICY.md 2>/dev/null || true
+            if ! git diff --cached --quiet; then
+              git commit -m "Deploy Privacy Policy HTML to GitHub Pages [skip ci]" || true
+              git push origin HEAD:${GITHUB_REF_NAME:-main} || true
+            fi
+          fi
 
       - name: 3. Set up JDK 17 (Temurin)
         uses: actions/setup-java@v4
@@ -643,7 +142,6 @@ jobs:
                 if [ -n "$DETECTED_ALIAS" ]; then
                   ALIAS="$DETECTED_ALIAS"
                 fi
-                # Test private key decryption with KPASS first, then SPASS, and normalize into a clean PKCS12 keystore where storepass == keypass
                 for TRY_PASS in "$KPASS" "$SPASS"; do
                   rm -f app/release-keystore.jks
                   if keytool -importkeystore \
@@ -693,20 +191,20 @@ jobs:
       - name: 8. Upload Signed Release APK (ለስልክ መጫኛ Release APK)
         uses: actions/upload-artifact@v4
         with:
-          name: EthioSportsManual-v1.0.0-Release-APK
+          name: EthioSportsManual-v1.1.0-Release-APK
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       - name: 9. Upload Play Store Release AAB Bundle (ለGoogle Play Console AAB)
         uses: actions/upload-artifact@v4
         with:
-          name: EthioSportsManual-v1.0.0-PlayStore-AAB
+          name: EthioSportsManual-v1.1.0-PlayStore-AAB
           path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
       - name: 10. Upload Debug APK (ለሙከራ Debug APK)
         uses: actions/upload-artifact@v4
         with:
-          name: EthioSportsManual-v1.0.0-Debug-APK
+          name: EthioSportsManual-v1.1.0-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
